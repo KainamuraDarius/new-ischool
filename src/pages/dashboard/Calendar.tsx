@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronLeft, ChevronRight, Clock3, MapPin, Plus, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,28 +24,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { eventsService } from "@/services/firestoreService";
 import { cn } from "@/lib/utils";
 
 type EventType = "lesson" | "assignment" | "exam" | "meeting" | "other";
 type CalendarView = "month" | "week" | "day";
 
-type EventRow = {
+interface Event {
   id: string;
-  user_id: string;
+  userId: string;
   title: string;
-  description: string;
-  event_type: EventType;
-  start_at: string;
-  end_at: string;
-  all_day: boolean;
-  location: string | null;
-  color: string;
-  subject: string | null;
-  teacher: string | null;
-  source_type: string | null;
-  source_id: string | null;
-  notification_minutes: number;
-};
+  description?: string;
+  type: EventType;
+  date: Date;
+  time?: string;
+  endTime?: string;
+  allDay: boolean;
+  location?: string;
+  subject?: string;
+  color?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
 
 const TYPE_STYLES: Record<EventType, string> = {
   lesson: "bg-primary/10 text-primary border-primary/20",
@@ -102,9 +101,9 @@ function toLocalInput(iso: string) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function prettyTimeRange(event: EventRow) {
-  if (event.all_day) return "All day";
-  return `${new Date(event.start_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} - ${new Date(event.end_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+function prettyTimeRange(event: Event) {
+  if (event.allDay) return "All day";
+  return `${event.time} - ${event.endTime || ""}`;
 }
 
 function viewLabel(view: CalendarView, cursor: Date) {
@@ -131,25 +130,14 @@ function moveCursor(cursor: Date, view: CalendarView, direction: -1 | 1) {
   return addMonths(cursor, direction);
 }
 
-function hoursUntil(startAt: string) {
-  const diff = new Date(startAt).getTime() - Date.now();
+function hoursUntil(date: Date) {
+  const diff = date.getTime() - Date.now();
   return diff / (1000 * 60 * 60);
 }
 
-function isUpcoming(event: EventRow) {
-  const hours = hoursUntil(event.start_at);
+function isUpcoming(event: Event) {
+  const hours = hoursUntil(event.date);
   return hours >= 0 && hours <= 24;
-}
-
-function isNotificationHot(event: EventRow) {
-  const minutes = (new Date(event.start_at).getTime() - Date.now()) / (1000 * 60);
-  return minutes >= 0 && minutes <= event.notification_minutes;
-}
-
-function formatCountdown(event: EventRow) {
-  const minutes = Math.round((new Date(event.start_at).getTime() - Date.now()) / (1000 * 60));
-  if (minutes < 60) return `${minutes} min`;
-  return `${Math.round(minutes / 60)} hr`;
 }
 
 export default function CalendarModule() {
@@ -158,39 +146,29 @@ export default function CalendarModule() {
   const [view, setView] = useState<CalendarView>("month");
   const [cursor, setCursor] = useState(() => startOfDay(new Date()));
   const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()));
-  const [events, setEvents] = useState<EventRow[]>([]);
+  const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState<EventRow | null>(null);
+  const [editing, setEditing] = useState<Partial<Event> | null>(null);
 
-  const range = useMemo(() => fetchRange(view, cursor), [cursor, view]);
-
+  // Load events from Firestore
   useEffect(() => {
     if (!user) return;
-    let cancelled = false;
 
     (async () => {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from("events")
-        .select("*")
-        .gte("start_at", range.start.toISOString())
-        .lt("start_at", range.end.toISOString())
-        .order("start_at", { ascending: true });
-
-      if (error) {
-        toast.error(error.message);
-      } else if (!cancelled) {
-        setEvents((data ?? []) as EventRow[]);
+      try {
+        setLoading(true);
+        const range = fetchRange(view, cursor);
+        const allEvents = await eventsService.getByDateRange(user.uid, range.start, range.end);
+        setEvents(allEvents as Event[]);
+      } catch (error) {
+        toast.error("Failed to load events");
+        console.error(error);
+      } finally {
+        setLoading(false);
       }
-
-      if (!cancelled) setLoading(false);
     })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [range.end, range.start, user]);
+  }, [user, view, cursor]);
 
   const monthGrid = useMemo(() => {
     const first = startOfMonth(cursor);
@@ -202,95 +180,93 @@ export default function CalendarModule() {
 
   const eventsForDay = (date: Date) =>
     events
-      .filter((event) => sameDay(new Date(event.start_at), date))
-      .sort((left, right) => left.start_at.localeCompare(right.start_at));
+      .filter((event) => sameDay(event.date, date))
+      .sort((left, right) => left.date.getTime() - right.date.getTime());
 
   const selectedEvents = eventsForDay(selectedDate);
   const upcomingEvents = useMemo(() => events.filter(isUpcoming), [events]);
 
   const openNew = (date?: Date) => {
     const base = date ?? selectedDate;
-    const start = new Date(base);
-    start.setHours(9, 0, 0, 0);
-    const end = new Date(base);
-    end.setHours(10, 0, 0, 0);
     setEditing({
-      id: "",
-      user_id: user?.id ?? "",
+      userId: user?.uid ?? "",
       title: "",
       description: "",
-      event_type: "lesson",
-      start_at: start.toISOString(),
-      end_at: end.toISOString(),
-      all_day: false,
+      type: "lesson",
+      date: base,
+      time: "09:00",
+      endTime: "10:00",
+      allDay: false,
       location: "",
-      color: "navy",
       subject: "",
-      teacher: "",
-      source_type: null,
-      source_id: null,
-      notification_minutes: 20,
+      color: "navy",
     });
     setOpen(true);
   };
 
-  const openEdit = (event: EventRow) => {
+  const openEdit = (event: Event) => {
     setEditing(event);
     setOpen(true);
   };
 
   const save = async () => {
     if (!editing || !user) return;
-    if (editing.source_type === "timetable_lesson") {
-      toast.info("Timetable lessons are managed from the Timetables module");
-      return;
-    }
-    if (new Date(editing.end_at) <= new Date(editing.start_at)) {
-      toast.error("End time must be after start time");
-      return;
-    }
 
-    const payload = {
+    const eventData = {
+      userId: user.uid,
       title: editing.title || editing.subject || "Untitled event",
       description: editing.description,
-      event_type: editing.event_type,
-      start_at: editing.start_at,
-      end_at: editing.end_at,
-      all_day: editing.all_day,
+      type: editing.type || ("lesson" as EventType),
+      date: editing.date || new Date(),
+      time: editing.time,
+      endTime: editing.endTime,
+      allDay: editing.allDay || false,
       location: editing.location,
-      subject: editing.subject || null,
-      teacher: editing.teacher || null,
-      notification_minutes: editing.notification_minutes,
+      subject: editing.subject,
     };
 
-    if (editing.id) {
-      const { error } = await supabase.from("events").update(payload).eq("id", editing.id);
-      if (error) return toast.error(error.message);
-      setEvents((current) => current.map((event) => (event.id === editing.id ? { ...event, ...editing } : event)));
-    } else {
-      const { data, error } = await supabase.from("events").insert({ user_id: user.id, ...payload }).select().single();
-      if (error) return toast.error(error.message);
-      setEvents((current) => [...current, data as EventRow].sort((left, right) => left.start_at.localeCompare(right.start_at)));
+    try {
+      if (editing.id) {
+        await eventsService.update(editing.id, eventData);
+        setEvents((current) =>
+          current.map((event) => (event.id === editing.id ? { ...event, ...eventData } : event))
+        );
+        toast.success("Event updated");
+      } else {
+        const eventId = await eventsService.create(eventData as any);
+        if (eventId) {
+          const newEvent: Event = {
+            id: eventId,
+            ...eventData,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          };
+          setEvents((current) =>
+            [...current, newEvent].sort((left, right) => left.date.getTime() - right.date.getTime())
+          );
+          toast.success("Event created");
+        }
+      }
+      setOpen(false);
+      setEditing(null);
+    } catch (error) {
+      toast.error("Failed to save event");
+      console.error(error);
     }
-
-    setOpen(false);
-    setEditing(null);
-    toast.success("Calendar saved");
   };
 
   const remove = async () => {
     if (!editing?.id) return;
-    if (editing.source_type === "timetable_lesson") {
-      toast.info("Generated lesson slots should be changed from Timetables");
-      return;
-    }
 
-    const { error } = await supabase.from("events").delete().eq("id", editing.id);
-    if (error) return toast.error(error.message);
-    setEvents((current) => current.filter((event) => event.id !== editing.id));
-    setOpen(false);
-    setEditing(null);
-    toast.success("Event deleted");
+    try {
+      await eventsService.delete(editing.id);
+      setEvents((current) => current.filter((event) => event.id !== editing.id));
+      setOpen(false);
+      setEditing(null);
+      toast.success("Event deleted");
+    } catch (error) {
+      toast.error("Failed to delete event");
+    }
   };
 
   return (
@@ -339,14 +315,14 @@ export default function CalendarModule() {
         </Card>
 
         <Card className="p-5">
-          <p className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Auto-published lessons</p>
+          <p className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Total events</p>
           <div className="flex items-center gap-3 mt-3">
             <span className="text-3xl font-display text-primary">
-              {events.filter((event) => event.source_type === "timetable_lesson").length}
+              {events.length}
             </span>
-            <Badge variant="outline">Timetable sync</Badge>
+            <Badge variant="outline">Calendar</Badge>
           </div>
-          <p className="text-sm text-muted-foreground mt-2">Changes from Timetables flow here automatically for the user’s personal schedule.</p>
+          <p className="text-sm text-muted-foreground mt-2">All your scheduled events across the calendar.</p>
         </Card>
 
         <Card className="p-5">
@@ -407,7 +383,7 @@ export default function CalendarModule() {
 
                         <div className="mt-2 space-y-1">
                           {dayEvents.slice(0, 3).map((event) => (
-                            <div key={event.id} className={cn("rounded-md border px-2 py-1 text-[11px] truncate", TYPE_STYLES[event.event_type])}>
+                            <div key={event.id} className={cn("rounded-md border px-2 py-1 text-[11px] truncate", TYPE_STYLES[event.type])}>
                               {event.subject || event.title}
                             </div>
                           ))}
@@ -436,10 +412,9 @@ export default function CalendarModule() {
                       <div className="mt-4 space-y-2">
                         {dayEvents.length === 0 && <div className="text-sm text-muted-foreground">No events</div>}
                         {dayEvents.map((event) => (
-                          <div key={event.id} className={cn("rounded-xl border px-3 py-2", TYPE_STYLES[event.event_type])}>
+                          <div key={event.id} className={cn("rounded-xl border px-3 py-2", TYPE_STYLES[event.type])}>
                             <div className="font-medium text-sm">{event.subject || event.title}</div>
                             <div className="text-xs mt-1 opacity-80">{prettyTimeRange(event)}</div>
-                            {event.teacher && <div className="text-xs mt-1 opacity-80">{event.teacher}</div>}
                           </div>
                         ))}
                       </div>
@@ -458,17 +433,15 @@ export default function CalendarModule() {
                     <button
                       key={event.id}
                       onClick={() => openEdit(event)}
-                      className={cn("w-full rounded-2xl border p-4 text-left transition-colors hover:bg-muted/40", TYPE_STYLES[event.event_type])}
+                      className={cn("w-full rounded-2xl border p-4 text-left transition-colors hover:bg-muted/40", TYPE_STYLES[event.type])}
                     >
                       <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="outline">{event.event_type}</Badge>
+                        <Badge variant="outline">{event.type}</Badge>
                         {isUpcoming(event) && <Badge className="bg-accent text-accent-foreground">Upcoming</Badge>}
-                        {isNotificationHot(event) && <Badge variant="destructive">Starts in {formatCountdown(event)}</Badge>}
                       </div>
                       <div className="font-display text-xl mt-3">{event.subject || event.title}</div>
                       <div className="text-sm mt-2 flex flex-wrap items-center gap-3 text-muted-foreground">
                         <span className="inline-flex items-center gap-1"><Clock3 className="h-4 w-4" />{prettyTimeRange(event)}</span>
-                        {event.teacher && <span>{event.teacher}</span>}
                         {event.location && <span className="inline-flex items-center gap-1"><MapPin className="h-4 w-4" />{event.location}</span>}
                       </div>
                       {event.description && <p className="text-sm text-foreground/80 mt-3">{event.description}</p>}
@@ -506,13 +479,10 @@ export default function CalendarModule() {
                     className="w-full rounded-xl border border-border/70 bg-card px-4 py-3 text-left hover:bg-muted/40"
                   >
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline">{event.event_type}</Badge>
-                      {event.source_type === "timetable_lesson" && <Badge className="bg-primary text-primary-foreground">Synced</Badge>}
-                      {isNotificationHot(event) && <Badge variant="destructive">Soon</Badge>}
+                      <Badge variant="outline">{event.type}</Badge>
                     </div>
                     <div className="font-medium text-foreground mt-2">{event.subject || event.title}</div>
                     <div className="text-xs text-muted-foreground mt-1">{prettyTimeRange(event)}</div>
-                    {event.teacher && <div className="text-xs text-muted-foreground mt-1">{event.teacher}</div>}
                     {event.location && <div className="text-xs text-muted-foreground mt-1">{event.location}</div>}
                   </button>
                 ))
@@ -530,18 +500,11 @@ export default function CalendarModule() {
 
           {editing && (
             <div className="space-y-4">
-              {editing.source_type === "timetable_lesson" && (
-                <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary">
-                  This lesson is generated from the Timetables module. Edit the source timetable if you need to move or replace it.
-                </div>
-              )}
-
               <div className="space-y-1.5">
                 <Label>Title</Label>
                 <Input
-                  value={editing.title}
+                  value={editing.title || ""}
                   onChange={(event) => setEditing({ ...editing, title: event.target.value })}
-                  disabled={editing.source_type === "timetable_lesson"}
                   placeholder="Science revision"
                 />
               </div>
@@ -550,9 +513,8 @@ export default function CalendarModule() {
                 <div className="space-y-1.5">
                   <Label>Type</Label>
                   <Select
-                    value={editing.event_type}
-                    onValueChange={(value) => setEditing({ ...editing, event_type: value as EventType })}
-                    disabled={editing.source_type === "timetable_lesson"}
+                    value={editing.type || "lesson"}
+                    onValueChange={(value) => setEditing({ ...editing, type: value as EventType })}
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -568,15 +530,18 @@ export default function CalendarModule() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label>Reminder window (minutes)</Label>
-                  <Input
-                    type="number"
-                    min={5}
-                    max={180}
-                    value={editing.notification_minutes}
-                    onChange={(event) => setEditing({ ...editing, notification_minutes: Number(event.target.value) || 20 })}
-                    disabled={editing.source_type === "timetable_lesson"}
-                  />
+                  <Label>All day</Label>
+                  <button
+                    onClick={() => setEditing({ ...editing, allDay: !editing.allDay })}
+                    className={cn(
+                      "w-full px-3 py-2 rounded-lg border text-sm font-medium transition-colors",
+                      editing.allDay
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-muted border-border hover:bg-muted/80"
+                    )}
+                  >
+                    {editing.allDay ? "Yes" : "No"}
+                  </button>
                 </div>
               </div>
 
@@ -584,62 +549,63 @@ export default function CalendarModule() {
                 <div className="space-y-1.5">
                   <Label>Subject</Label>
                   <Input
-                    value={editing.subject ?? ""}
+                    value={editing.subject || ""}
                     onChange={(event) => setEditing({ ...editing, subject: event.target.value })}
-                    disabled={editing.source_type === "timetable_lesson"}
                     placeholder="Mathematics"
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label>Teacher</Label>
+                  <Label>Location</Label>
                   <Input
-                    value={editing.teacher ?? ""}
-                    onChange={(event) => setEditing({ ...editing, teacher: event.target.value })}
-                    disabled={editing.source_type === "timetable_lesson"}
-                    placeholder="Mrs. Njoroge"
+                    value={editing.location || ""}
+                    onChange={(event) => setEditing({ ...editing, location: event.target.value })}
+                    placeholder="Room 12"
                   />
                 </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>Location</Label>
-                <Input
-                  value={editing.location ?? ""}
-                  onChange={(event) => setEditing({ ...editing, location: event.target.value })}
-                  disabled={editing.source_type === "timetable_lesson"}
-                  placeholder="Room 12"
-                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <Label>Start</Label>
+                  <Label>Date</Label>
                   <Input
-                    type="datetime-local"
-                    value={toLocalInput(editing.start_at)}
-                    onChange={(event) => setEditing({ ...editing, start_at: new Date(event.target.value).toISOString() })}
-                    disabled={editing.source_type === "timetable_lesson"}
+                    type="date"
+                    value={editing.date ? editing.date.toISOString().split('T')[0] : ""}
+                    onChange={(event) => {
+                      const newDate = new Date(event.target.value);
+                      setEditing({ ...editing, date: newDate });
+                    }}
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <Label>End</Label>
-                  <Input
-                    type="datetime-local"
-                    value={toLocalInput(editing.end_at)}
-                    onChange={(event) => setEditing({ ...editing, end_at: new Date(event.target.value).toISOString() })}
-                    disabled={editing.source_type === "timetable_lesson"}
-                  />
-                </div>
+                {!editing.allDay && (
+                  <div className="space-y-1.5">
+                    <Label>Time</Label>
+                    <Input
+                      type="time"
+                      value={editing.time || "09:00"}
+                      onChange={(event) => setEditing({ ...editing, time: event.target.value })}
+                    />
+                  </div>
+                )}
               </div>
 
+              {!editing.allDay && (
+                <div className="space-y-1.5">
+                  <Label>End time</Label>
+                  <Input
+                    type="time"
+                    value={editing.endTime || "10:00"}
+                    onChange={(event) => setEditing({ ...editing, endTime: event.target.value })}
+                  />
+                </div>
+              )}
+
               <div className="space-y-1.5">
-                <Label>Notes</Label>
+                <Label>Description</Label>
                 <Textarea
                   rows={4}
-                  value={editing.description}
+                  value={editing.description || ""}
                   onChange={(event) => setEditing({ ...editing, description: event.target.value })}
-                  disabled={editing.source_type === "timetable_lesson"}
                   placeholder="Agenda, materials, links..."
                 />
               </div>
@@ -647,11 +613,7 @@ export default function CalendarModule() {
           )}
 
           <DialogFooter className="gap-2 sm:justify-between">
-            {editing?.source_type === "timetable_lesson" ? (
-              <Button variant="outline" onClick={() => navigate("/dashboard/timetables")}>
-                Manage in Timetables
-              </Button>
-            ) : editing?.id ? (
+            {editing?.id ? (
               <Button variant="ghost" onClick={remove} className="text-destructive hover:text-destructive">
                 <Trash2 className="h-4 w-4 mr-2" />
                 Delete
@@ -660,7 +622,7 @@ export default function CalendarModule() {
 
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => setOpen(false)}>Close</Button>
-              {editing?.source_type !== "timetable_lesson" && <Button onClick={save}>Save</Button>}
+              <Button onClick={save}>Save</Button>
             </div>
           </DialogFooter>
         </DialogContent>

@@ -8,7 +8,7 @@ iSchool Whiteboard is an enterprise-grade, real-time collaborative whiteboard mo
 
 ### ✅ Core Whiteboard Features
 - **Infinite Canvas**: Drawing experience with smooth, responsive rendering
-- **Real-time Synchronization**: Live updates across all participants using Supabase Realtime
+- **Real-time Synchronization**: Live updates across all participants using Firebase Realtime Database
 - **Multiple Drawing Tools**:
   -  Pen tool with adjustable stroke width
   -  Rectangle & Circle shapes
@@ -29,7 +29,7 @@ iSchool Whiteboard is an enterprise-grade, real-time collaborative whiteboard mo
 - **Lesson Integration**: Auto-link whiteboard sessions to scheduled lessons
 - **Session States**: Scheduled, Live, Ended statuses
 - **Attendance Tracking**: Automatic recording of student participation
-- **Auto-Save**: Periodic persistence to Supabase
+- **Auto-Save**: Periodic persistence to Firebase Firestore
 - **Session Playback**: Replay lessons by stepping through drawing actions
 
 ### ✅ Advanced Tools
@@ -67,13 +67,13 @@ iSchool Whiteboard is an enterprise-grade, real-time collaborative whiteboard mo
 - **React 18** + TypeScript
 - **Tailwind CSS** for styling
 - **shadcn/ui** for component library
-- **Supabase** for real-time updates
+- **Firebase** for real-time updates and persistence
 - **Framer Motion** for animations
 - **Lucide Icons** for UI icons
 
 ### Backend
-- **Supabase** (PostgreSQL + Realtime + Auth)
-- **Socket.IO** ready (via Supabase Realtime)
+- **Firebase** (Firestore + Realtime Database + Auth)
+- **Socket.IO** ready (via Firebase Realtime Database)
 - **REST API** for persistence
 
 ### Database Schema
@@ -106,14 +106,11 @@ schoolverse-ecosystem/
 │   │   ├── utils.ts
 │   │   └── whiteboard.ts
 │   ├── integrations/
-│   │   └── supabase/
-│   │       ├── client.ts
-│   │       └── types.ts
+│   │   └── firebase/
+│   │       ├── config.ts
+│   │       ├── auth.ts
+│   │       └── index.ts
 │   └── App.tsx                          # Route setup
-├── supabase/
-│   └── migrations/
-│       ├── 20260509195000_add_timetable_whiteboard_modules.sql
-│       └── 20260509212000_add_learning_monitoring_reporting.sql
 └── package.json
 
 ```
@@ -123,7 +120,7 @@ schoolverse-ecosystem/
 ### 1. Prerequisites
 - Node.js 18+
 - npm or yarn
-- Supabase project
+- Firebase project
 - Git
 
 ### 2. Clone Repository
@@ -140,19 +137,22 @@ npm install
 ### 4. Environment Variables
 Create `.env.local`:
 ```env
-VITE_SUPABASE_URL=your_supabase_url
-VITE_SUPABASE_ANON_KEY=your_supabase_key
+VITE_FIREBASE_API_KEY=your_firebase_api_key
+VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your_project_id
+VITE_FIREBASE_STORAGE_BUCKET=your_project.appspot.com
+VITE_FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id
+VITE_FIREBASE_APP_ID=your_app_id
+VITE_FIREBASE_DATABASE_URL=https://your_project.firebaseio.com
 ```
 
 ### 5. Database Setup
-Run migrations:
-```bash
-supabase migration up
-```
-
-Or manually execute:
-- `supabase/migrations/20260509195000_add_timetable_whiteboard_modules.sql`
-- `supabase/migrations/20260509212000_add_learning_monitoring_reporting.sql`
+Create the following Firestore collections:
+- `whiteboard_sessions`: Session management
+- `whiteboard_elements`: Drawing elements (strokes, shapes, text)
+- `whiteboard_quiz_responses`: Quiz answer tracking
+- `lesson_attendance`: Attendance records
+- `learning_activity`: Learning metrics
 
 ### 6. Run Development Server
 ```bash
@@ -391,8 +391,8 @@ CREATE TABLE whiteboard_quiz_responses (
 
 ## Security & Permissions
 
-- **Row-Level Security (RLS)**: Database-enforced permissions
-- **Authentication**: Supabase JWT tokens
+- **Firestore Security Rules**: Database-enforced permissions
+- **Authentication**: Firebase JWT tokens
 - **Authorization**: Teachers can only manage their sessions
 - **Data Validation**: Server-side payload validation
 - **Attendance Tracking**: Automatic based on session join/leave
@@ -401,12 +401,12 @@ CREATE TABLE whiteboard_quiz_responses (
 
 ### Elements not appearing
 - Check browser console for errors
-- Verify Supabase connection
+- Verify Firebase connection
 - Ensure user is in active session
 
 ### Real-time sync not working
 - Check network connection
-- Verify Supabase Realtime is enabled
+- Verify Firebase Realtime Database is enabled
 - Check browser console for WebSocket errors
 
 ### Quiz not launching

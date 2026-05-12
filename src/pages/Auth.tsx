@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { signIn, signUp, signInWithGoogle } from "@/integrations/firebase";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,20 +14,25 @@ export default function AuthPage() {
   const nav = useNavigate();
   const { user, loading } = useAuth();
   const [busy, setBusy] = useState(false);
-  const [resending, setResending] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
 
   const authMessage = (message: string) => {
-    if (message === "Email not confirmed") {
-      return "Your account exists, but you need to confirm your email before signing in.";
-    }
-    if (message.includes("weak and easy to guess")) {
+    if (message.includes("weak-password")) {
       return "That password is too weak. Use a longer, less common password with mixed characters.";
     }
-    if (message.includes("missing OAuth secret")) {
-      return "Google sign-in is not configured in Supabase yet. Add the Google OAuth client ID and secret in your Supabase Auth provider settings.";
+    if (message.includes("email-already-in-use")) {
+      return "This email is already registered. Try signing in instead.";
+    }
+    if (message.includes("user-not-found")) {
+      return "No account found with this email. Create an account first.";
+    }
+    if (message.includes("wrong-password")) {
+      return "Incorrect password. Please try again.";
+    }
+    if (message.includes("Google sign-in")) {
+      return "Google sign-in is not configured yet. Check your Firebase settings.";
     }
     return message;
   };
@@ -39,7 +44,7 @@ export default function AuthPage() {
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await signIn(email, password);
     setBusy(false);
     if (error) toast.error(authMessage(error.message));
     else nav("/dashboard");
@@ -48,53 +53,26 @@ export default function AuthPage() {
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: `${window.location.origin}/dashboard`,
-        data: { display_name: name },
-      },
-    });
+    const { error } = await signUp(email, password, name);
     setBusy(false);
     if (error) toast.error(authMessage(error.message));
-    else toast.success("Account created. Check your email and confirm it before signing in.");
+    else {
+      toast.success("Account created successfully! You can now sign in.");
+      setEmail("");
+      setPassword("");
+      setName("");
+    }
   };
 
   const handleGoogle = async () => {
     setBusy(true);
-    const { lovable } = await import("@/integrations/lovable");
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: `${window.location.origin}/dashboard`,
-    });
-    if (result.error) {
-      setBusy(false);
-      toast.error(authMessage((result.error as Error).message || "Google sign-in failed"));
-      return;
-    }
-    if (result.redirected) return;
-    nav("/dashboard");
-  };
-
-  const handleResendConfirmation = async () => {
-    if (!email) {
-      toast.error("Enter your email address first.");
-      return;
-    }
-    setResending(true);
-    const { error } = await supabase.auth.resend({
-      type: "signup",
-      email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/dashboard`,
-      },
-    });
-    setResending(false);
+    const { error } = await signInWithGoogle();
+    setBusy(false);
     if (error) {
-      toast.error(authMessage(error.message));
+      toast.error(authMessage((error as Error).message || "Google sign-in failed"));
       return;
     }
-    toast.success("Confirmation email sent. Check your inbox and spam folder.");
+    nav("/dashboard");
   };
 
   return (
@@ -124,13 +102,7 @@ export default function AuthPage() {
                   <Label>Password</Label>
                   <Input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  If you already signed up, confirm your email before trying to sign in.
-                </p>
                 <Button type="submit" className="w-full" disabled={busy}>Sign in</Button>
-                <Button type="button" variant="ghost" className="w-full" onClick={handleResendConfirmation} disabled={busy || resending}>
-                  {resending ? "Sending confirmation..." : "Resend confirmation email"}
-                </Button>
               </form>
             </TabsContent>
 
@@ -149,7 +121,7 @@ export default function AuthPage() {
                   <Input type="password" minLength={6} required value={password} onChange={(e) => setPassword(e.target.value)} />
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Use a strong password. Common passwords are rejected by Supabase.
+                  Use a strong password with mixed characters.
                 </p>
                 <Button type="submit" className="w-full" disabled={busy}>Create account</Button>
               </form>

@@ -1,11 +1,11 @@
 # iSchoolVerse
 
-iSchoolVerse is a React + Supabase school operating system prototype with a unified dashboard for learning, planning, and assessment.
+iSchoolVerse is a React + Firebase school operating system prototype with a unified dashboard for learning, planning, and assessment.
 
 ## Current modules
 
 - `Overview`: dashboard landing page with module navigation.
-- `Notes`: Supabase-backed note taking with autosave, search, pinning, and color themes.
+- `Notes`: Firebase-backed note taking with autosave, search, pinning, and color themes.
 - `Calendar`: month-view scheduling for lessons, assignments, exams, meetings, and other events.
 - `Reports`: subjects, assessments, weighted averages, and simple report-card summaries.
 - `iSchoolBook`, `Monitor`, `Timetables`, `Whiteboard`: placeholder module shells ready for implementation.
@@ -15,7 +15,7 @@ iSchoolVerse is a React + Supabase school operating system prototype with a unif
 - React 18 + TypeScript
 - Vite
 - Tailwind CSS + shadcn/ui
-- Supabase Auth + Postgres
+- Firebase Auth + Firestore
 - TanStack Query
 
 ## Local setup
@@ -26,11 +26,16 @@ iSchoolVerse is a React + Supabase school operating system prototype with a unif
 npm install
 ```
 
-2. Create a `.env` file with:
+2. Create a `.env` file with your Firebase configuration:
 
 ```env
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_PUBLISHABLE_KEY=your_supabase_anon_key
+VITE_FIREBASE_API_KEY=your_firebase_api_key
+VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your_project_id
+VITE_FIREBASE_STORAGE_BUCKET=your_project.appspot.com
+VITE_FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id
+VITE_FIREBASE_APP_ID=your_app_id
+VITE_FIREBASE_DATABASE_URL=https://your_project.firebaseio.com
 ```
 
 3. Run the app:
@@ -41,13 +46,12 @@ npm run dev
 
 ## Database
 
-The Supabase migrations in [`supabase/migrations`](/home/kainamura/StudioProjects/schoolverse-ecosystem/supabase/migrations) currently create:
+Firebase uses the following services for data persistence:
 
-- `profiles`
-- `user_roles`
-- `notes`
-- `events`
-- `subjects`
+- **Firestore**: Primary database for storing collections (profiles, notes, events, subjects, etc.)
+- **Realtime Database**: For real-time synchronization across multiple users
+- **Storage**: For file uploads and media management
+- **Authentication**: Email/password and OAuth (Google) sign-in
 - `assessments`
 
 Row-level security is enabled so users can only access their own data.

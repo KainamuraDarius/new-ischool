@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, BookOpen, NotebookPen, Calendar, Activity,
-  BarChart3, CalendarRange, Presentation, GraduationCap, LogOut, ShieldCheck,
+  BarChart3, CalendarRange, Presentation, GraduationCap, LogOut,
 } from "lucide-react";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
@@ -10,7 +10,6 @@ import {
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/integrations/supabase/client";
 
 const modules = [
   { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
@@ -28,14 +27,7 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const { pathname } = useLocation();
   const { signOut, user } = useAuth();
-  const [isAdmin, setIsAdmin] = useState(false);
-
-  useEffect(() => {
-    if (!user) return;
-    supabase.from("user_roles").select("role").eq("user_id", user.id).then(({ data }) => {
-      setIsAdmin((data ?? []).some((r: any) => r.role === "admin"));
-    });
-  }, [user]);
+  const [isAdmin] = useState(false);
 
   return (
     <Sidebar collapsible="icon">
@@ -83,7 +75,7 @@ export function AppSidebar() {
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={pathname === "/dashboard/admin"}>
                     <NavLink to="/dashboard/admin" className="flex items-center gap-2">
-                      <ShieldCheck className="h-4 w-4" />
+                      <GraduationCap className="h-4 w-4" />
                       {!collapsed && <span>School admin</span>}
                     </NavLink>
                   </SidebarMenuButton>
@@ -98,6 +90,21 @@ export function AppSidebar() {
         {!collapsed && user && (
           <div className="text-xs text-sidebar-foreground/70 mb-2 truncate px-1">
             {user.email}
+          </div>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={signOut}
+          className="w-full justify-start text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        >
+          <LogOut className="h-4 w-4" />
+          {!collapsed && <span className="ml-2">Sign out</span>}
+        </Button>
+      </SidebarFooter>
+    </Sidebar>
+  );
+}
           </div>
         )}
         <Button

@@ -1,0 +1,125 @@
+// Firestore Security Rules for iSchoolVerse
+// Deploy these to your Firebase project in Cloud Firestore > Rules
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function isTeacher() {
+      return isAuthenticated() &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['teacher', 'admin'];
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Users collection - only users can see their own profile
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow create: if isAuthenticated() && isOwner(userId);
+      allow update: if isAuthenticated() && isOwner(userId);
+      allow delete: if isAuthenticated() && isAdmin();
+    }
+
+    // Notes collection - users can only access their own notes
+    match /notes/{noteId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
+      allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
+      allow update: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
+      allow delete: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
+    }
+
+    // Events collection - users can access events they created or are invited to
+    match /events/{eventId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.userId) || resource.data.attendees.contains(request.auth.uid) || isAdmin());
+      allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
+      allow update: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
+      allow delete: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
+    }
+
+    // Lessons collection - teachers can manage lessons, students can read their lessons
+    match /lessons/{lessonId} {
+      allow read: if isAuthenticated() && (
+        isOwner(resource.data.teacherId) ||
+        resource.data.students.contains(request.auth.uid) ||
+        isAdmin()
+      );
+      allow create: if isAuthenticated() && (isTeacher() || isAdmin());
+      allow update: if isAuthenticated() && (isOwner(resource.data.teacherId) || isAdmin());
+      allow delete: if isAuthenticated() && (isOwner(resource.data.teacherId) || isAdmin());
+    }
+
+    // Whiteboard sessions - participants can access their sessions
+    match /whiteboard_sessions/{sessionId} {
+      allow read: if isAuthenticated() && (
+        resource.data.participants.contains(request.auth.uid) ||
+        isAdmin()
+      );
+      allow create: if isAuthenticated() && isTeacher();
+      allow update: if isAuthenticated() && (
+        isOwner(resource.data.teacherId) ||
+        resource.data.participants.contains(request.auth.uid) ||
+        isAdmin()
+      );
+      allow delete: if isAuthenticated() && (isOwner(resource.data.teacherId) || isAdmin());
+    }
+
+    // Lesson attendance - students and teachers can record attendance
+    match /lesson_attendance/{attendanceId} {
+      allow read: if isAuthenticated() && (
+        isOwner(resource.data.userId) ||
+        isTeacher() ||
+        isAdmin()
+      );
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        isOwner(resource.data.userId) ||
+        isTeacher() ||
+        isAdmin()
+      );
+      allow delete: if isAuthenticated() && isAdmin();
+    }
+
+    // Assessments - students can view their own, teachers can manage
+    match /assessments/{assessmentId} {
+      allow read: if isAuthenticated() && (
+        isOwner(resource.data.studentId) ||
+        isTeacher() ||
+        isAdmin()
+      );
+      allow create: if isAuthenticated() && (isTeacher() || isAdmin());
+      allow update: if isAuthenticated() && (isTeacher() || isAdmin());
+      allow delete: if isAuthenticated() && isAdmin();
+    }
+
+    // Learning activity logs - for monitoring
+    match /learning_activity/{activityId} {
+      allow read: if isAuthenticated() && (
+        isOwner(resource.data.userId) ||
+        isTeacher() ||
+        isAdmin()
+      );
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        isOwner(resource.data.userId) ||
+        isTeacher() ||
+        isAdmin()
+      );
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

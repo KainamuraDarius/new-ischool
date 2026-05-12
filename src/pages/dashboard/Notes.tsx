@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BookOpenCheck, Loader2, NotebookPen, Pin, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -10,194 +9,151 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import LearningNoteEditor from "@/components/LearningNoteEditor";
-import { createStarterBookTopics, makeId, parseBookTopic, parseLearningNote, type BookTopic, type LearningNote } from "@/lib/ischool";
-import type { Tables } from "@/integrations/supabase/types";
+import { notesService } from "@/services/firestoreService";
 import { cn } from "@/lib/utils";
 
-type NoteRow = Tables<"notes">;
-type TopicRow = Tables<"book_topics">;
-
-function todayDate() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function defaultTopicNote(topic: BookTopic | null, userId: string) {
-  return {
-    user_id: userId,
-    title: topic ? `${topic.title} notes` : "Untitled note",
-    topic_id: topic?.id ?? null,
-    lesson_title: topic?.title ?? null,
-    note_date: todayDate(),
-    subject: topic?.subject_name ?? null,
-    content: "",
-    auto_tags: {
-      subject: topic?.subject_name,
-      lesson: topic?.title,
-      date: todayDate(),
-      topicSlug: topic?.slug,
-    },
-    answer_spaces: [
-      {
-        id: makeId("answer"),
-        prompt: "Practice response",
-        response: "",
-        expanded: true,
-      },
-    ],
-    annotation_marks: [],
-    media_embeds: [],
-    exercises: [],
-  };
+interface Note {
+  id: string;
+  userId: string;
+  title: string;
+  content: string;
+  color?: string;
+  isPinned: boolean;
+  createdAt: any;
+  updatedAt: any;
+  subject?: string;
+  topic?: string;
 }
 
 export default function Notes() {
   const { user } = useAuth();
-  const [topics, setTopics] = useState<BookTopic[]>([]);
-  const [notes, setNotes] = useState<LearningNote[]>([]);
+  const [notes, setNotes] = useState<Note[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const saveTimer = useRef<number | null>(null);
-  const noteOpenedAt = useRef<number | null>(null);
-  const currentNoteRef = useRef<LearningNote | null>(null);
 
-  useEffect(() => {
-    currentNoteRef.current = notes.find((note) => note.id === activeId) ?? null;
-  }, [activeId, notes]);
-
+  // Load notes from Firestore
   useEffect(() => {
     if (!user) return;
-    let cancelled = false;
 
     (async () => {
-      setLoading(true);
-      const [{ data: noteRows, error: noteError }, { data: topicRows, error: topicError }] = await Promise.all([
-        supabase.from("notes").select("*").order("pinned", { ascending: false }).order("updated_at", { ascending: false }),
-        supabase.from("book_topics").select("*").order("subject_name").order("topic_order"),
-      ]);
-
-      if (noteError) toast.error(noteError.message);
-      if (topicError) toast.error(topicError.message);
-
-      if (!cancelled) {
-        setNotes((noteRows ?? []).map((row) => parseLearningNote(row as NoteRow)));
-        setTopics((topicRows ?? []).map((row) => parseBookTopic(row as TopicRow)));
-        setActiveId((current) => current ?? noteRows?.[0]?.id ?? null);
+      try {
+        setLoading(true);
+        const fetchedNotes = await notesService.getAll(user.uid);
+        setNotes(fetchedNotes as Note[]);
+        if (fetchedNotes.length > 0) {
+          setActiveId(fetchedNotes[0].id);
+        }
+      } catch (error) {
+        toast.error("Failed to load notes");
+        console.error(error);
+      } finally {
         setLoading(false);
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
   }, [user]);
 
-  useEffect(() => {
-    noteOpenedAt.current = Date.now();
-    return () => {
-      const current = currentNoteRef.current;
-      if (!user || !current || !noteOpenedAt.current) return;
-      const minutes = Math.max(1, Math.round((Date.now() - noteOpenedAt.current) / 60000));
-      void supabase.from("learning_activity").insert({
-        owner_id: user.id,
-        student_id: user.id,
-        subject_name: current.subject,
-        topic_id: current.topic_id,
-        note_id: current.id,
-        source: "notes",
-        lesson_title: current.lesson_title,
-        minutes_spent: minutes,
-        progress_percent: current.reading_progress ?? 0,
-        content_percent: current.reading_progress ?? 0,
-      });
-    };
-  }, [activeId, user]);
-
   const active = useMemo(() => notes.find((note) => note.id === activeId) ?? null, [activeId, notes]);
-  const activeTopic = useMemo(() => topics.find((topic) => topic.id === active?.topic_id) ?? null, [active?.topic_id, topics]);
 
   const filtered = useMemo(() => {
     const search = query.trim().toLowerCase();
     if (!search) return notes;
     return notes.filter((note) =>
-      [note.title, note.content, note.subject ?? "", note.lesson_title ?? ""].some((value) => value.toLowerCase().includes(search)),
+      [note.title, note.content, note.subject ?? ""].some((value) => value.toLowerCase().includes(search))
     );
   }, [notes, query]);
 
   const createNote = async () => {
     if (!user) return;
-    if (topics.length === 0) {
-      const { error } = await supabase.from("book_topics").insert(createStarterBookTopics(user.id));
-      if (error) {
-        toast.error(error.message);
-        return;
+    try {
+      const noteId = await notesService.create({
+        userId: user.uid,
+        title: "Untitled note",
+        content: "",
+        color: "yellow",
+      });
+      
+      if (noteId) {
+        const newNote: Note = {
+          id: noteId,
+          userId: user.uid,
+          title: "Untitled note",
+          content: "",
+          color: "yellow",
+          isPinned: false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        setNotes((current) => [newNote, ...current]);
+        setActiveId(noteId);
+        toast.success("Note created");
       }
-      const { data: topicRows } = await supabase.from("book_topics").select("*").order("subject_name").order("topic_order");
-      setTopics((topicRows ?? []).map((row) => parseBookTopic(row as TopicRow)));
+    } catch (error) {
+      toast.error("Failed to create note");
+      console.error(error);
     }
-
-    const topic = topics[0] ?? null;
-    const { data, error } = await supabase.from("notes").insert(defaultTopicNote(topic, user.id)).select().single();
-    if (error || !data) {
-      toast.error(error?.message ?? "Could not create note");
-      return;
-    }
-
-    const parsed = parseLearningNote(data as NoteRow);
-    setNotes((current) => [parsed, ...current]);
-    setActiveId(parsed.id);
   };
 
-  const patch = (id: string, partial: Partial<LearningNote>) => {
+  const scheduleSave = (id: string, partial: Partial<Note>) => {
+    // Update local state immediately
     setNotes((current) => current.map((note) => (note.id === id ? { ...note, ...partial } : note)));
-  };
-
-  const scheduleSave = (id: string, partial: Partial<LearningNote>) => {
-    patch(id, partial);
+    
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     setSaving(true);
     saveTimer.current = window.setTimeout(async () => {
-      const { error } = await supabase.from("notes").update(partial as any).eq("id", id);
-      setSaving(false);
-      if (error) toast.error(error.message);
+      try {
+        await notesService.update(id, partial);
+        setSaving(false);
+      } catch (error) {
+        setSaving(false);
+        toast.error("Failed to save note");
+      }
     }, 450);
   };
 
   const setColor = async (color: string) => {
     if (!active) return;
-    patch(active.id, { color });
-    const { error } = await supabase.from("notes").update({ color }).eq("id", active.id);
-    if (error) toast.error(error.message);
+    try {
+      await notesService.update(active.id, { color });
+      setNotes((current) => current.map((note) => (note.id === active.id ? { ...note, color } : note)));
+    } catch (error) {
+      toast.error("Failed to update note color");
+    }
   };
 
   const togglePin = async () => {
     if (!active) return;
-    const next = !active.pinned;
-    patch(active.id, { pinned: next });
-    const { error } = await supabase.from("notes").update({ pinned: next }).eq("id", active.id);
-    if (error) {
-      toast.error(error.message);
-      return;
+    try {
+      const next = !active.isPinned;
+      await notesService.toggle(active.id, next);
+      setNotes((current) => 
+        [...current]
+          .map((note) => (note.id === active.id ? { ...note, isPinned: next } : note))
+          .sort((a, b) => {
+            if (a.isPinned !== b.isPinned) return b.isPinned ? 1 : -1;
+            return b.updatedAt.localeCompare(a.updatedAt);
+          })
+      );
+      toast.success(next ? "Note pinned" : "Note unpinned");
+    } catch (error) {
+      toast.error("Failed to update pin status");
     }
-    setNotes((current) => [...current].sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.updated_at.localeCompare(left.updated_at)));
   };
 
   const remove = async () => {
     if (!active) return;
-    const removingId = active.id;
-    const { error } = await supabase.from("notes").delete().eq("id", active.id);
-    if (error) {
-      toast.error(error.message);
-      return;
+    try {
+      await notesService.delete(active.id);
+      const remaining = notes.filter((note) => note.id !== active.id);
+      setNotes(remaining);
+      setActiveId((current) => (current === active.id ? remaining[0]?.id ?? null : current));
+      toast.success("Note deleted");
+    } catch (error) {
+      toast.error("Failed to delete note");
     }
-    const remaining = notes.filter((note) => note.id !== removingId);
-    setNotes(remaining);
-    setActiveId((current) => (current === removingId ? remaining[0]?.id ?? null : current));
-    toast.success("Note deleted");
   };
-
-  const retagToTopic = async (topicId: string) => {
     if (!active) return;
     const topic = topics.find((entry) => entry.id === topicId) ?? null;
     const partial = {

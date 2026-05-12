@@ -1,87 +1,195 @@
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
-import { ShieldCheck, Users, BookOpen, Activity, GraduationCap, TrendingUp, Search } from "lucide-react";
+import {
+  ShieldCheck,
+  Users,
+  BookOpen,
+  Activity,
+  GraduationCap,
+  TrendingUp,
+  Search,
+  Loader2,
+} from "lucide-react";
 import { toast } from "sonner";
+import { db } from "@/integrations/firebase/config";
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  doc,
+  updateDoc,
+  setDoc,
+} from "firebase/firestore";
 
-type RoleName = "admin" | "teacher" | "student";
-type UserRow = { user_id: string; display_name: string | null; created_at: string; roles: string[] };
+interface UserProfile {
+  uid: string;
+  email: string;
+  displayName?: string;
+  role: "admin" | "teacher" | "student";
+  createdAt: Date;
+}
+
+interface Stats {
+  totalUsers: number;
+  totalLessons: number;
+  totalAssessments: number;
+  averageScore: number;
+}
 
 export default function AdminPage() {
   const { user } = useAuth();
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-  const [users, setUsers] = useState<UserRow[]>([]);
-  const [stats, setStats] = useState({ subjects: 0, assessments: 0, sessions: 0, avg: 0 });
+  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [stats, setStats] = useState<Stats>({
+    totalUsers: 0,
+    totalLessons: 0,
+    totalAssessments: 0,
+    averageScore: 0,
+  });
   const [q, setQ] = useState("");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!user) return;
     (async () => {
-      const { data: roles } = await supabase
-        .from("user_roles").select("role").eq("user_id", user.id);
-      const admin = (roles ?? []).some((r: any) => r.role === "admin");
-      setIsAdmin(admin);
-      if (!admin) return;
-      await loadAll();
+      try {
+        // Check if user is admin by checking their profile
+        const userDocRef = doc(db, "users", user.uid);
+        const userDoc = await getDocs(
+          query(collection(db, "users"), where("uid", "==", user.uid))
+        );
+
+        let isUserAdmin = false;
+        if (!userDoc.empty) {
+          const userData = userDoc.docs[0].data();
+          isUserAdmin = userData.role === "admin";
+        }
+
+        setIsAdmin(isUserAdmin);
+        if (!isUserAdmin) {
+          setLoading(false);
+          return;
+        }
+
+        await loadAll();
+      } catch (error) {
+        console.error("Failed to check admin status:", error);
+        setIsAdmin(false);
+        setLoading(false);
+      }
     })();
   }, [user]);
 
   const loadAll = async () => {
-    const [usersRes, subRes, assessRes, sessRes] = await Promise.all([
-      supabase.rpc("list_users_with_roles"),
-      supabase.from("subjects").select("id", { count: "exact", head: true }),
-      supabase.from("assessments").select("score,max_score"),
-      supabase.from("lesson_sessions").select("id,status", { count: "exact" }),
-    ]);
-    if (usersRes.error) toast.error(usersRes.error.message);
-    setUsers((usersRes.data ?? []) as UserRow[]);
-    const all = (assessRes.data ?? []) as any[];
-    const avg = all.length
-      ? all.reduce((s, a) => s + (Number(a.score) / Number(a.max_score || 1)) * 100, 0) / all.length
-      : 0;
-    setStats({
-      subjects: subRes.count ?? 0,
-      assessments: all.length,
-      sessions: sessRes.count ?? 0,
-      avg: Math.round(avg),
-    });
+    try {
+      // Get all users
+      const usersSnapshot = await getDocs(collection(db, "users"));
+      const usersList: UserProfile[] = usersSnapshot.docs.map((doc) => ({
+        uid: doc.id,
+        email: doc.data().email || "",
+        displayName: doc.data().displayName,
+        role: doc.data().role || "student",
+        createdAt: doc.data().createdAt?.toDate() || new Date(),
+      }));
+
+      setUsers(usersList);
+
+      // Get stats
+      const lessonsSnapshot = await getDocs(collection(db, "lessons"));
+      const assessmentsSnapshot = await getDocs(collection(db, "assessments"));
+
+      let totalScore = 0;
+      let scoreCount = 0;
+      assessmentsSnapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data.score !== undefined && data.maxScore) {
+          totalScore += (data.score / data.maxScore) * 100;
+          scoreCount++;
+        }
+      });
+
+      setStats({
+        totalUsers: usersList.length,
+        totalLessons: lessonsSnapshot.size,
+        totalAssessments: assessmentsSnapshot.size,
+        averageScore: scoreCount > 0 ? Math.round(totalScore / scoreCount) : 0,
+      });
+
+      setLoading(false);
+    } catch (error) {
+      console.error("Failed to load stats:", error);
+      toast.error("Failed to load admin data");
+      setLoading(false);
+    }
   };
 
-  const toggleRole = async (uid: string, role: RoleName, has: boolean) => {
-    if (has) {
-      const { error } = await supabase.from("user_roles").delete().eq("user_id", uid).eq("role", role);
-      if (error) return toast.error(error.message);
-    } else {
-      const { error } = await supabase.from("user_roles").insert({ user_id: uid, role });
-      if (error) return toast.error(error.message);
+  const toggleRole = async (uid: string, newRole: "admin" | "teacher" | "student") => {
+    try {
+      const userRef = doc(db, "users", uid);
+      await updateDoc(userRef, { role: newRole });
+      setUsers((prev) =>
+        prev.map((u) => (u.uid === uid ? { ...u, role: newRole } : u))
+      );
+      toast.success(`Role updated to ${newRole}`);
+    } catch (error) {
+      toast.error("Failed to update user role");
+      console.error(error);
     }
-    toast.success(`Role ${has ? "removed" : "granted"}: ${role}`);
-    await loadAll();
   };
 
   const promoteSelfToAdmin = async () => {
     if (!user) return;
-    const { error } = await supabase.from("user_roles").insert({ user_id: user.id, role: "admin" });
-    if (error) return toast.error(error.message);
-    toast.success("You are now an admin. Reloading…");
-    setTimeout(() => location.reload(), 600);
+    try {
+      const userRef = doc(db, "users", user.uid);
+      await setDoc(
+        userRef,
+        {
+          role: "admin",
+          email: user.email,
+          displayName: user.displayName,
+          createdAt: new Date(),
+        },
+        { merge: true }
+      );
+      toast.success("You are now an admin. Reloading…");
+      setTimeout(() => location.reload(), 600);
+    } catch (error) {
+      toast.error("Failed to promote to admin");
+      console.error(error);
+    }
   };
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return users;
-    return users.filter((u) => (u.display_name ?? "").toLowerCase().includes(s) || u.user_id.includes(s));
+    return users.filter(
+      (u) =>
+        (u.displayName ?? "").toLowerCase().includes(s) ||
+        u.email.toLowerCase().includes(s) ||
+        u.uid.includes(s)
+    );
   }, [users, q]);
 
-  if (isAdmin === null) {
-    return <div className="text-muted-foreground">Loading…</div>;
+  if (isAdmin === null || loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh] text-muted-foreground">
+        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+        Loading…
+      </div>
+    );
   }
 
   if (!isAdmin) {
@@ -91,8 +199,9 @@ export default function AdminPage() {
           <ShieldCheck className="h-10 w-10 mx-auto text-muted-foreground" />
           <h1 className="font-display text-2xl">Admin access required</h1>
           <p className="text-sm text-muted-foreground">
-            This area is restricted to school administrators. If you're the school owner setting up
-            iSchoolVerse, you can claim the first admin role for your account below.
+            This area is restricted to school administrators. If you're the
+            school owner setting up iSchoolVerse, you can claim the first admin
+            role for your account below.
           </p>
           <Button onClick={promoteSelfToAdmin}>Make me an admin</Button>
         </Card>
@@ -101,108 +210,143 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
-      <header>
-        <h1 className="font-display text-2xl md:text-3xl text-foreground flex items-center gap-2">
-          <ShieldCheck className="h-7 w-7 text-primary" /> School administration
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-display text-foreground flex items-center gap-2">
+          <ShieldCheck className="h-8 w-8 text-primary" />
+          iSchoolVerse Admin
         </h1>
-        <p className="text-sm text-muted-foreground">
-          Manage users, assign roles, and monitor school-wide activity.
+        <p className="text-muted-foreground mt-1">
+          Manage users, roles, and monitor school-wide statistics.
         </p>
-      </header>
+      </div>
 
-      <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard icon={Users} label="Total users" value={users.length} />
-        <StatCard icon={BookOpen} label="Subjects" value={stats.subjects} />
-        <StatCard icon={Activity} label="Lesson sessions" value={stats.sessions} />
-        <StatCard icon={TrendingUp} label="School avg" value={`${stats.avg}%`} />
-      </section>
-
-      <Card className="p-5">
-        <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
-          <h2 className="font-display text-lg flex items-center gap-2">
-            <GraduationCap className="h-4 w-4 text-primary" /> User roster
-          </h2>
-          <div className="relative">
-            <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search users…"
-              className="pl-8 w-64"
-            />
+      {/* Stats Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">Total Users</p>
+              <p className="text-3xl font-bold text-foreground">
+                {stats.totalUsers}
+              </p>
+            </div>
+            <Users className="h-8 w-8 text-primary/40" />
           </div>
+        </Card>
+        <Card className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">Total Lessons</p>
+              <p className="text-3xl font-bold text-foreground">
+                {stats.totalLessons}
+              </p>
+            </div>
+            <BookOpen className="h-8 w-8 text-primary/40" />
+          </div>
+        </Card>
+        <Card className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">Assessments</p>
+              <p className="text-3xl font-bold text-foreground">
+                {stats.totalAssessments}
+              </p>
+            </div>
+            <Activity className="h-8 w-8 text-primary/40" />
+          </div>
+        </Card>
+        <Card className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">Avg Score</p>
+              <p className="text-3xl font-bold text-foreground">
+                {stats.averageScore}%
+              </p>
+            </div>
+            <TrendingUp className="h-8 w-8 text-primary/40" />
+          </div>
+        </Card>
+      </div>
+
+      {/* Users Table */}
+      <Card className="p-6">
+        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+          <GraduationCap className="h-5 w-5 text-primary" />
+          User Management
+        </h2>
+
+        <div className="mb-4 relative">
+          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by name, email, or ID…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            className="pl-9"
+          />
         </div>
+
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>Email</TableHead>
                 <TableHead>Name</TableHead>
-                <TableHead>Joined</TableHead>
-                <TableHead>Roles</TableHead>
+                <TableHead>Current Role</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((u) => (
-                <TableRow key={u.user_id}>
-                  <TableCell className="font-medium">
-                    {u.display_name || <span className="text-muted-foreground">Unnamed</span>}
-                    <div className="text-[10px] font-mono text-muted-foreground">{u.user_id.slice(0, 8)}…</div>
+              {filtered.map((userItem) => (
+                <TableRow key={userItem.uid}>
+                  <TableCell className="font-mono text-sm">
+                    {userItem.email}
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {new Date(u.created_at).toLocaleDateString()}
-                  </TableCell>
+                  <TableCell>{userItem.displayName || "-"}</TableCell>
                   <TableCell>
-                    <div className="flex gap-1 flex-wrap">
-                      {u.roles.length === 0 && <span className="text-xs text-muted-foreground">none</span>}
-                      {u.roles.map((r) => (
-                        <Badge key={r} variant="outline" className="capitalize">{r}</Badge>
-                      ))}
-                    </div>
+                    <Badge variant="outline">{userItem.role}</Badge>
                   </TableCell>
-                  <TableCell className="text-right">
-                    <div className="inline-flex gap-1">
-                      {(["student", "teacher", "admin"] as RoleName[]).map((r) => {
-                        const has = u.roles.includes(r);
-                        return (
-                          <Button
-                            key={r}
-                            size="sm"
-                            variant={has ? "default" : "outline"}
-                            onClick={() => toggleRole(u.user_id, r, has)}
-                            className="capitalize"
-                          >
-                            {has ? "✓ " : "+ "}{r}
-                          </Button>
-                        );
-                      })}
-                    </div>
+                  <TableCell className="text-right space-x-2">
+                    {userItem.role !== "admin" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => toggleRole(userItem.uid, "admin")}
+                      >
+                        Make Admin
+                      </Button>
+                    )}
+                    {userItem.role !== "teacher" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => toggleRole(userItem.uid, "teacher")}
+                      >
+                        Make Teacher
+                      </Button>
+                    )}
+                    {userItem.role !== "student" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => toggleRole(userItem.uid, "student")}
+                      >
+                        Make Student
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
-              {filtered.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground py-6">
-                    No users match your search.
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
         </div>
+
+        {filtered.length === 0 && (
+          <div className="text-center py-6 text-muted-foreground">
+            No users found.
+          </div>
+        )}
       </Card>
     </div>
-  );
-}
-
-function StatCard({ icon: Icon, label, value }: { icon: any; label: string; value: number | string }) {
-  return (
-    <Card className="p-4">
-      <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-muted-foreground">
-        <Icon className="h-4 w-4" /> {label}
-      </div>
-      <div className="font-display text-2xl mt-2 text-primary">{value}</div>
-    </Card>
   );
 }

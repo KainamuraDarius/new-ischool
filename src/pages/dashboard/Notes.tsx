@@ -154,23 +154,6 @@ export default function Notes() {
       toast.error("Failed to delete note");
     }
   };
-    if (!active) return;
-    const topic = topics.find((entry) => entry.id === topicId) ?? null;
-    const partial = {
-      topic_id: topic?.id ?? null,
-      lesson_title: topic?.title ?? null,
-      subject: topic?.subject_name ?? null,
-      auto_tags: {
-        subject: topic?.subject_name,
-        lesson: topic?.title,
-        date: active.note_date,
-        topicSlug: topic?.slug,
-      },
-    };
-    patch(active.id, partial);
-    const { error } = await supabase.from("notes").update(partial).eq("id", active.id);
-    if (error) toast.error(error.message);
-  };
 
   if (loading) {
     return (
@@ -224,15 +207,13 @@ export default function Notes() {
                     >
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-foreground truncate">{note.title || "Untitled note"}</span>
-                        {note.pinned && <Pin className="h-3.5 w-3.5 text-accent ml-auto" />}
+                        {note.isPinned && <Pin className="h-3.5 w-3.5 text-accent ml-auto" />}
                       </div>
                       <div className="flex flex-wrap gap-2 mt-2">
                         {note.subject && <Badge variant="outline">{note.subject}</Badge>}
-                        {note.lesson_title && <Badge variant="outline">{note.lesson_title}</Badge>}
-                        <Badge variant="outline">{note.reading_progress ?? 0}% read</Badge>
-                        <Badge variant="outline">{note.exercise_score.toFixed(0)}% quiz</Badge>
+                        {note.topic && <Badge variant="outline">{note.topic}</Badge>}
                       </div>
-                      <p className="text-[11px] text-muted-foreground mt-2">{new Date(note.updated_at).toLocaleString()}</p>
+                      <p className="text-[11px] text-muted-foreground mt-2">{new Date(note.updatedAt).toLocaleString()}</p>
                     </button>
                   </li>
                 ))}
@@ -245,55 +226,17 @@ export default function Notes() {
           {active && (
             <Card className="p-4">
               <div className="grid grid-cols-1 md:grid-cols-[1fr_240px_180px] gap-4 items-end">
-                <div>
-                  <Label>Linked topic</Label>
-                  <Select value={active.topic_id ?? "__none"} onValueChange={(value) => retagToTopic(value === "__none" ? "" : value)}>
-                    <SelectTrigger className="mt-2">
-                      <SelectValue placeholder="Choose a lesson topic" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none">Standalone note</SelectItem>
-                      {topics.map((topic) => (
-                        <SelectItem key={topic.id} value={topic.id}>
-                          {topic.title}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Note date</Label>
-                  <Input
-                    type="date"
-                    value={active.note_date}
-                    className="mt-2"
-                    onChange={(event) => scheduleSave(active.id, { note_date: event.target.value })}
-                  />
-                </div>
-                <div className="rounded-xl border border-border/60 bg-secondary/50 px-4 py-3">
-                  <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Companion topic</div>
-                  <div className="font-medium text-foreground mt-2 inline-flex items-center gap-2">
-                    <BookOpenCheck className="h-4 w-4 text-primary" />
-                    {activeTopic ? activeTopic.title : "Standalone note"}
-                  </div>
-                </div>
-              </div>
-            </Card>
+             div className="flex-1 min-h-0">
+              <LearningNoteEditor
+                note={active}
+                saving={saving}
+                onUpdate={(partial) => active && scheduleSave(active.id, partial)}
+                onTogglePin={togglePin}
+                onDelete={remove}
+                onSetColor={setColor}
+              />
+            </div>
           )}
-
-          <div className="flex-1 min-h-0">
-            <LearningNoteEditor
-              note={active}
-              topic={activeTopic}
-              saving={saving}
-              onUpdate={(partial) => active && scheduleSave(active.id, partial)}
-              onTogglePin={togglePin}
-              onDelete={remove}
-              onSetColor={setColor}
-            />
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

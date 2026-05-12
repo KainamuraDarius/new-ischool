@@ -1,15 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import {
   BookOpen, NotebookPen, Calendar as CalIcon, Activity, BarChart3,
   CalendarRange, Presentation, Clock, MapPin, TrendingUp, Users, ShieldCheck,
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { db } from "@/integrations/firebase/config";
+import { collection, query, where, getDocs, orderBy, limit } from "firebase/firestore";
 
 type Role = "admin" | "teacher" | "student";
+
+interface UserProfile {
+  displayName?: string;
+  role?: Role;
+}
 
 const moduleCards = [
   { title: "iSchoolBook", desc: "Interactive content & cross-subject lessons.", url: "/dashboard/book", icon: BookOpen },
@@ -25,7 +31,7 @@ const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function Overview() {
   const { user } = useAuth();
-  const [name, setName] = useState<string | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [role, setRole] = useState<Role>("student");
 
   const [events, setEvents] = useState<any[]>([]);
@@ -37,56 +43,77 @@ export default function Overview() {
   useEffect(() => {
     if (!user) return;
     (async () => {
-      const [{ data: prof }, { data: roles }] = await Promise.all([
-        supabase.from("profiles").select("display_name").eq("id", user.id).maybeSingle(),
-        supabase.from("user_roles").select("role").eq("user_id", user.id),
-      ]);
-      setName(prof?.display_name ?? null);
-      const rs = (roles ?? []).map((r: any) => r.role);
-      if (rs.includes("admin")) setRole("admin");
-      else if (rs.includes("teacher")) setRole("teacher");
-      else setRole("student");
+      try {
+        // Get user profile
+        const profileSnap = await getDocs(query(collection(db, "users"), where("uid", "==", user.uid)));
+        if (!profileSnap.empty) {
+          const userData = profileSnap.docs[0].data() as UserProfile;
+          setProfile(userData);
+          setRole(userData.role || "student");
+        }
 
-      const today = new Date();
-      const todayDow = today.getDay();
-      const horizon = new Date(); horizon.setDate(horizon.getDate() + 7);
+        const today = new Date();
+        const todayDow = today.getDay();
+        const horizon = new Date();
+        horizon.setDate(horizon.getDate() + 7);
 
-      const [evRes, nRes, ttRes, aRes, sRes, bRes, subRes] = await Promise.all([
-        supabase.from("events").select("*")
-          .gte("start_at", today.toISOString())
-          .lte("start_at", horizon.toISOString())
-          .order("start_at").limit(5),
-        supabase.from("notes").select("id,title,subject,updated_at,pinned")
-          .order("updated_at", { ascending: false }).limit(5),
-        supabase.from("timetable_entries").select("*")
-          .eq("day_of_week", todayDow).order("start_time"),
-        supabase.from("assessments").select("score,max_score,subject_id,assessed_on")
-          .order("assessed_on", { ascending: false }).limit(20),
-        supabase.from("lesson_sessions").select("id", { count: "exact", head: true }),
-        supabase.from("whiteboards").select("id", { count: "exact", head: true }),
-        supabase.from("subjects").select("id", { count: "exact", head: true }),
-      ]);
+        // Get events within date range
+        const eventsSnap = await getDocs(
+          query(collection(db, "events"), where("userId", "==", user.uid), orderBy("startAt"), limit(5))
+        );
+        setEvents(
+          eventsSnap.docs
+            .map((doc) => ({ id: doc.id, ...doc.data() }))
+            .filter((e) => new Date(e.startAt) >= today && new Date(e.startAt) <= horizon)
+        );
 
-      setEvents(evRes.data ?? []);
-      setNotes(nRes.data ?? []);
-      setTt(ttRes.data ?? []);
-      setAssessments(aRes.data ?? []);
-      setCounts({
-        sessions: sRes.count ?? 0,
-        boards: bRes.count ?? 0,
-        subjects: subRes.count ?? 0,
-      });
+        // Get recent notes
+        const notesSnap = await getDocs(
+          query(collection(db, "notes"), where("userId", "==", user.uid), orderBy("updatedAt", "desc"), limit(5))
+        );
+        setNotes(notesSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+
+        // Get lessons for today (simplified - would need more complex logic for real timetable)
+        const lessonsSnap = await getDocs(
+          query(collection(db, "lessons"), where("teacherId", "==", user.uid))
+        );
+        setTt(
+          lessonsSnap.docs
+            .map((doc) => ({ id: doc.id, ...doc.data() }))
+            .filter((l) => l.dayOfWeek === todayDow)
+        );
+
+        // Get assessments
+        const assessSnap = await getDocs(
+          query(collection(db, "assessments"), where("userId", "==", user.uid), orderBy("assessedOn", "desc"), limit(20))
+        );
+        setAssessments(assessSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+
+        // Get counts
+        const sessionsSnap = await getDocs(query(collection(db, "whiteboard_sessions")));
+        const boardsSnap = await getDocs(collection(db, "whiteboard_sessions"));
+        
+        setCounts({
+          sessions: sessionsSnap.size,
+          boards: boardsSnap.size,
+          subjects: 0, // Can be updated based on your data structure
+        });
+      } catch (error) {
+        console.error("Error loading overview data:", error);
+      }
     })();
   }, [user]);
 
   const perfAvg = useMemo(() => {
     if (!assessments.length) return null;
-    const pcts = assessments.map((a) => (Number(a.score) / Number(a.max_score || 1)) * 100);
+    const pcts = assessments.map((a) => (Number(a.score || 0) / Number(a.maxScore || 1)) * 100);
     return Math.round(pcts.reduce((s, x) => s + x, 0) / pcts.length);
   }, [assessments]);
 
-  const fmtTime = (iso: string) =>
-    new Date(iso).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const fmtTime = (iso: string | any) => {
+    const date = typeof iso === "string" ? new Date(iso) : iso.toDate?.() || new Date(iso);
+    return date.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+  };
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
@@ -99,7 +126,7 @@ export default function Overview() {
           </Badge>
         </div>
         <h1 className="font-display text-3xl md:text-4xl mt-2">
-          Welcome{name ? `, ${name}` : ""} to iSchoolVerse
+          Welcome{profile?.displayName ? `, ${profile.displayName}` : ""} to iSchoolVerse
         </h1>
         <p className="mt-3 text-primary-foreground/80 max-w-2xl">
           {role === "admin" && "School-wide pulse: schedules, sessions, and academic outcomes at a glance."}
@@ -136,12 +163,12 @@ export default function Overview() {
               {tt.map((e) => (
                 <li key={e.id} className="py-2.5 flex items-center gap-3">
                   <div className="text-xs font-mono text-muted-foreground w-24">
-                    {e.start_time?.slice(0, 5)}–{e.end_time?.slice(0, 5)}
+                    {e.startTime?.slice(0, 5)}–{e.endTime?.slice(0, 5)}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate">{e.title}</div>
+                    <div className="font-medium truncate">{e.title || e.subject}</div>
                     <div className="text-xs text-muted-foreground truncate">
-                      {[e.teacher, e.class_name, e.room].filter(Boolean).join(" · ")}
+                      {[e.teacher, e.class, e.room].filter(Boolean).join(" · ")}
                     </div>
                   </div>
                 </li>
@@ -197,7 +224,7 @@ export default function Overview() {
                   <div className="min-w-0">
                     <div className="text-sm font-medium truncate">{e.title}</div>
                     <div className="text-xs text-muted-foreground flex items-center gap-2">
-                      <span>{fmtTime(e.start_at)}</span>
+                      <span>{fmtTime(e.startAt)}</span>
                       {e.location && (<><span>·</span><MapPin className="h-3 w-3" /><span className="truncate">{e.location}</span></>)}
                     </div>
                   </div>
@@ -224,11 +251,11 @@ export default function Overview() {
                 <li key={n.id}>
                   <Link to="/dashboard/notes" className="block p-3 rounded-md border border-border hover:bg-secondary/50 transition-colors">
                     <div className="flex items-center gap-2">
-                      {n.pinned && <Badge variant="secondary" className="h-4 px-1 text-[10px]">Pinned</Badge>}
+                      {n.isPinned && <Badge variant="secondary" className="h-4 px-1 text-[10px]">Pinned</Badge>}
                       <span className="font-medium text-sm truncate">{n.title}</span>
                     </div>
                     <div className="text-xs text-muted-foreground mt-1">
-                      {n.subject || "Untagged"} · {new Date(n.updated_at).toLocaleDateString()}
+                      {n.subject || "Untagged"} · {new Date(n.updatedAt.seconds ? n.updatedAt.seconds * 1000 : n.updatedAt).toLocaleDateString()}
                     </div>
                   </Link>
                 </li>

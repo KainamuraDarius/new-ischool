@@ -226,17 +226,21 @@ export default function Notes() {
           {active && (
             <Card className="p-4">
               <div className="grid grid-cols-1 md:grid-cols-[1fr_240px_180px] gap-4 items-end">
-             div className="flex-1 min-h-0">
-              <LearningNoteEditor
-                note={active}
-                saving={saving}
-                onUpdate={(partial) => active && scheduleSave(active.id, partial)}
-                onTogglePin={togglePin}
-                onDelete={remove}
-                onSetColor={setColor}
-              />
-            </div>
+                <div className="flex-1 min-h-0">
+                  <LearningNoteEditor
+                    note={active}
+                    saving={saving}
+                    onUpdate={(partial) => active && scheduleSave(active.id, partial)}
+                    onTogglePin={togglePin}
+                    onDelete={remove}
+                    onSetColor={setColor}
+                  />
+                </div>
+              </div>
+            </Card>
           )}
+        </div>
+      </div>
     </div>
   );
 }

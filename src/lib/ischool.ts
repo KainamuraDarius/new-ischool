@@ -1,4 +1,3 @@
-import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 import type { Exercise } from "@/components/ExerciseManager";
 
 export type MediaEmbed = {
@@ -30,11 +29,29 @@ export type CrossSubjectLink = {
   topicSlug: string;
 };
 
-export type BookTopic = Tables<"book_topics"> & {
+export type BookTopic = {
+  id?: string;
+  owner_id?: string;
+  subject_name: string;
+  subject_slug: string;
+  title: string;
+  slug: string;
+  lesson_label: string;
+  summary: string;
+  content_html: string;
   cross_subject_links: CrossSubjectLink[];
+  model_embed_url?: string;
+  simulation_url?: string;
+  cover_color?: string;
+  estimated_minutes?: number;
+  topic_order?: number;
 };
 
-export type LearningNote = Omit<Tables<"notes">, "annotation_marks" | "answer_spaces" | "auto_tags" | "media_embeds" | "exercises"> & {
+export type LearningNote = {
+  id?: string;
+  user_id?: string;
+  title: string;
+  content: string;
   annotation_marks: AnnotationMark[];
   answer_spaces: AnswerSpace[];
   auto_tags: {
@@ -45,6 +62,11 @@ export type LearningNote = Omit<Tables<"notes">, "annotation_marks" | "answer_sp
   };
   media_embeds: MediaEmbed[];
   exercises: Exercise[];
+  subject?: string;
+  color?: string;
+  pinned?: boolean;
+  created_at?: any;
+  updated_at?: any;
 };
 
 export type AppPerspective = "student" | "teacher" | "admin";
@@ -277,23 +299,23 @@ const STARTER_TOPICS = [
     estimated_minutes: 30,
     topic_order: 3,
   },
-] satisfies Array<Omit<TablesInsert<"book_topics">, "owner_id"> & { cross_subject_links: CrossSubjectLink[] }>;
+] as Array<BookTopic>;
 
-export function createStarterBookTopics(ownerId: string): TablesInsert<"book_topics">[] {
+export function createStarterBookTopics(ownerId: string): BookTopic[] {
   return STARTER_TOPICS.map((topic) => ({
     owner_id: ownerId,
     ...topic,
   }));
 }
 
-export function parseBookTopic(row: Tables<"book_topics">): BookTopic {
+export function parseBookTopic(row: BookTopic): BookTopic {
   return {
     ...row,
     cross_subject_links: parseCrossSubjectLinks(row.cross_subject_links),
   };
 }
 
-export function parseLearningNote(row: Tables<"notes">): LearningNote {
+export function parseLearningNote(row: LearningNote): LearningNote {
   return {
     ...row,
     annotation_marks: parseAnnotationMarks(row.annotation_marks),

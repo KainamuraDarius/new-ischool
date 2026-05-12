@@ -1,5 +1,3 @@
-import type { TablesInsert, TablesUpdate } from "@/integrations/supabase/types";
-
 export const WEEK_DAYS = [
   { value: 1, label: "Mon" },
   { value: 2, label: "Tue" },

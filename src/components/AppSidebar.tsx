@@ -105,18 +105,3 @@ export function AppSidebar() {
     </Sidebar>
   );
 }
-          </div>
-        )}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={signOut}
-          className="w-full justify-start text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        >
-          <LogOut className="h-4 w-4" />
-          {!collapsed && <span className="ml-2">Sign out</span>}
-        </Button>
-      </SidebarFooter>
-    </Sidebar>
-  );
-}

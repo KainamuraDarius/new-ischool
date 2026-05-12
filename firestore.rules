@@ -39,19 +39,18 @@ service cloud.firestore {
       allow delete: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
     }
 
-    // Events collection - users can access events they created or are invited to
+    // Events collection - users can access events they created
     match /events/{eventId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.userId) || resource.data.attendees.contains(request.auth.uid) || isAdmin());
+      allow read: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
       allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
       allow update: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
       allow delete: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
     }
 
-    // Lessons collection - teachers can manage lessons, students can read their lessons
+    // Lessons collection - teachers can manage lessons, students can read
     match /lessons/{lessonId} {
       allow read: if isAuthenticated() && (
         isOwner(resource.data.teacherId) ||
-        resource.data.students.contains(request.auth.uid) ||
         isAdmin()
       );
       allow create: if isAuthenticated() && (isTeacher() || isAdmin());
@@ -59,16 +58,15 @@ service cloud.firestore {
       allow delete: if isAuthenticated() && (isOwner(resource.data.teacherId) || isAdmin());
     }
 
-    // Whiteboard sessions - participants can access their sessions
+    // Whiteboard sessions - teachers and authenticated users can access
     match /whiteboard_sessions/{sessionId} {
       allow read: if isAuthenticated() && (
-        resource.data.participants.contains(request.auth.uid) ||
+        isOwner(resource.data.teacherId) ||
         isAdmin()
       );
-      allow create: if isAuthenticated() && isTeacher();
+      allow create: if isAuthenticated() && (isTeacher() || isAdmin());
       allow update: if isAuthenticated() && (
         isOwner(resource.data.teacherId) ||
-        resource.data.participants.contains(request.auth.uid) ||
         isAdmin()
       );
       allow delete: if isAuthenticated() && (isOwner(resource.data.teacherId) || isAdmin());
@@ -115,6 +113,22 @@ service cloud.firestore {
         isTeacher() ||
         isAdmin()
       );
+    }
+
+    // Book resources - users can access their own resources
+    match /book_resources/{resourceId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
+      allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
+      allow update: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
+      allow delete: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
+    }
+
+    // Whiteboard elements - associated with whiteboard sessions
+    match /whiteboard_elements/{elementId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAuthenticated() && (isOwner(resource.data.createdBy) || isAdmin());
     }
 
     // Default deny

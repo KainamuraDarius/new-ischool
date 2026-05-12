@@ -10,8 +10,8 @@ iSchool Whiteboard is an enterprise-grade, real-time collaborative whiteboard mo
 - **Infinite Canvas**: Drawing experience with smooth, responsive rendering
 - **Real-time Synchronization**: Live updates across all participants using Supabase Realtime
 - **Multiple Drawing Tools**:
-  - ✏️ Pen tool with adjustable stroke width
-  - 🔲 Rectangle & Circle shapes
+  -  Pen tool with adjustable stroke width
+  -  Rectangle & Circle shapes
   - ➖ Line tool
   - 📝 Text annotations
   - 🗑️ Eraser tool

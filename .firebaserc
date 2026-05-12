@@ -1,0 +1,17 @@
+{
+  "projects": {
+    "default": "ischoolverse"
+  },
+  "targets": {
+    "ischoolverse": {
+      "hosting": {
+        "app": [
+          "ischoolverse"
+        ],
+        "admin": [
+          "ischoolverse-admin"
+        ]
+      }
+    }
+  }
+}

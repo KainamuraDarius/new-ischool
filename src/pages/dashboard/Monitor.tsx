@@ -34,6 +34,8 @@ interface LessonSession {
   status: "scheduled" | "in-progress" | "completed";
 }
 
+type SessionStatus = LessonSession["status"];
+
 const STATUS_COLORS: Record<string, string> = {
   present: "bg-emerald-100 text-emerald-900",
   absent: "bg-red-100 text-red-900",
@@ -314,7 +316,12 @@ export default function MonitorPage() {
                 <div className="flex items-center gap-3">
                   <Badge className={cn("text-xs font-medium", STATUS_COLORS[session.status])}>{session.status}</Badge>
 
-                  <Select value={session.status} onValueChange={(newStatus) => updateSessionStatus(session.id, newStatus as any)}>
+                  <Select
+                    value={session.status}
+                    onValueChange={(newStatus) =>
+                      updateSessionStatus(session.id, newStatus as SessionStatus)
+                    }
+                  >
                     <SelectTrigger className="w-[140px]">
                       <SelectValue />
                     </SelectTrigger>

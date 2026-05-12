@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:admin": "vite build --config vite.admin.config.ts",
+    "build:all": "npm run build && npm run build:admin",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",

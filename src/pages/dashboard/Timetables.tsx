@@ -139,7 +139,7 @@ export default function TimetablesPage() {
         updatedAt: new Date(),
       };
 
-      const lessonId = await timetableService.createLesson(lessonData as any);
+      const lessonId = await timetableService.createLesson(lessonData);
       if (lessonId) {
         const createdLesson: Lesson = {
           id: lessonId,

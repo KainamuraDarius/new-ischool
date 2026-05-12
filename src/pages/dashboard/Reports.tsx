@@ -29,6 +29,8 @@ interface Assessment {
   updatedAt: Date;
 }
 
+type AssessmentType = Assessment["type"];
+
 const TYPES: Record<string, string> = {
   quiz: "Quiz",
   test: "Test",
@@ -169,7 +171,7 @@ export default function ReportsPage() {
         updatedAt: new Date(),
       };
 
-      const assessmentId = await assessmentService.recordAssessment(assessmentData as any);
+      const assessmentId = await assessmentService.recordAssessment(assessmentData);
       if (assessmentId) {
         const createdAssessment: Assessment = {
           id: assessmentId,
@@ -240,7 +242,15 @@ export default function ReportsPage() {
                 </div>
                 <div>
                   <Label>Type</Label>
-                  <Select value={newAssessment.type} onValueChange={(v) => setNewAssessment({ ...newAssessment, type: v as any })}>
+                  <Select
+                    value={newAssessment.type}
+                    onValueChange={(v) =>
+                      setNewAssessment({
+                        ...newAssessment,
+                        type: v as AssessmentType,
+                      })
+                    }
+                  >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>

@@ -180,7 +180,7 @@ export default function WhiteboardPage() {
         isActive: true,
       };
 
-      const sessionId = await whiteboardService.createSession(sessionData as any);
+      const sessionId = await whiteboardService.createSession(sessionData);
       if (sessionId) {
         const newSession: WhiteboardSession = {
           id: sessionId,
@@ -208,7 +208,7 @@ export default function WhiteboardPage() {
         updatedAt: new Date(),
       };
 
-      await whiteboardService.updateSession(activeSession.id, updatedSession as any);
+      await whiteboardService.updateSession(activeSession.id, updatedSession);
       setSessions((prev) =>
         prev.map((s) => (s.id === activeSession.id ? updatedSession : s))
       );

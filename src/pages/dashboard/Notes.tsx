@@ -1,29 +1,149 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BookOpenCheck, Loader2, NotebookPen, Pin, Plus, Search } from "lucide-react";
+import { Loader2, NotebookPen, Pin, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import LearningNoteEditor from "@/components/LearningNoteEditor";
 import { notesService } from "@/services/firestoreService";
+import {
+  calculateExerciseScore,
+  parseAnnotationMarks,
+  parseAnswerSpaces,
+  parseAutoTags,
+  parseExercises,
+  parseMediaEmbeds,
+  type LearningNote,
+} from "@/lib/ischool";
 import { cn } from "@/lib/utils";
 
-interface Note {
+type FirestoreTimestampLike = {
+  seconds?: number;
+  toDate?: () => Date;
+};
+
+interface Note extends LearningNote {
   id: string;
   userId: string;
-  title: string;
-  content: string;
-  color?: string;
+  user_id?: string;
   isPinned: boolean;
-  createdAt: any;
-  updatedAt: any;
+  pinned?: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  created_at?: Date;
+  updated_at?: Date;
   subject?: string;
   topic?: string;
+  note_date?: string;
+  exercise_score: number;
 }
+
+const LEGACY_COLOR_MAP: Record<string, string> = {
+  yellow: "gold",
+  blue: "navy",
+  green: "sage",
+  pink: "rose",
+  purple: "rose",
+};
+
+const toDateValue = (value: unknown, fallback = new Date()): Date => {
+  if (value instanceof Date) {
+    return value;
+  }
+
+  if (value && typeof value === "object") {
+    const timestamp = value as FirestoreTimestampLike;
+    if (typeof timestamp.toDate === "function") {
+      return timestamp.toDate();
+    }
+
+    if (typeof timestamp.seconds === "number") {
+      return new Date(timestamp.seconds * 1000);
+    }
+  }
+
+  if (typeof value === "string" || typeof value === "number") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  return fallback;
+};
+
+const normalizeColor = (value: unknown) => {
+  if (typeof value !== "string" || !value.trim()) {
+    return "cream";
+  }
+
+  return LEGACY_COLOR_MAP[value] ?? value;
+};
+
+const normalizeNote = (note: Partial<Note> & Record<string, unknown>): Note => {
+  const autoTags = parseAutoTags(note.auto_tags);
+  const exercises = parseExercises(note.exercises);
+  const createdAt = toDateValue(note.createdAt ?? note.created_at);
+  const updatedAt = toDateValue(note.updatedAt ?? note.updated_at, createdAt);
+  const isPinned = Boolean(note.isPinned ?? note.pinned);
+  const subject =
+    typeof note.subject === "string" && note.subject.trim()
+      ? note.subject
+      : autoTags.subject;
+  const topic =
+    typeof note.topic === "string" && note.topic.trim()
+      ? note.topic
+      : autoTags.lesson;
+
+  return {
+    id: typeof note.id === "string" ? note.id : "",
+    userId:
+      typeof note.userId === "string"
+        ? note.userId
+        : typeof note.user_id === "string"
+          ? note.user_id
+          : "",
+    user_id:
+      typeof note.user_id === "string"
+        ? note.user_id
+        : typeof note.userId === "string"
+          ? note.userId
+          : undefined,
+    title:
+      typeof note.title === "string" && note.title.trim()
+        ? note.title
+        : "Untitled note",
+    content: typeof note.content === "string" ? note.content : "",
+    color: normalizeColor(note.color),
+    isPinned,
+    pinned: isPinned,
+    createdAt,
+    updatedAt,
+    created_at: createdAt,
+    updated_at: updatedAt,
+    subject,
+    topic,
+    note_date:
+      typeof note.note_date === "string" && note.note_date.trim()
+        ? note.note_date
+        : autoTags.date,
+    annotation_marks: parseAnnotationMarks(note.annotation_marks),
+    answer_spaces: parseAnswerSpaces(note.answer_spaces),
+    auto_tags: {
+      ...autoTags,
+      subject: subject ?? autoTags.subject,
+      lesson: topic ?? autoTags.lesson,
+    },
+    media_embeds: parseMediaEmbeds(note.media_embeds),
+    exercises,
+    exercise_score:
+      typeof note.exercise_score === "number"
+        ? note.exercise_score
+        : calculateExerciseScore(exercises),
+  };
+};
 
 export default function Notes() {
   const { user } = useAuth();
@@ -42,9 +162,12 @@ export default function Notes() {
       try {
         setLoading(true);
         const fetchedNotes = await notesService.getAll(user.uid);
-        setNotes(fetchedNotes as Note[]);
-        if (fetchedNotes.length > 0) {
-          setActiveId(fetchedNotes[0].id);
+        const normalizedNotes = fetchedNotes.map((note) =>
+          normalizeNote(note as Partial<Note> & Record<string, unknown>)
+        );
+        setNotes(normalizedNotes);
+        if (normalizedNotes.length > 0) {
+          setActiveId(normalizedNotes[0].id);
         }
       } catch (error) {
         toast.error("Failed to load notes");
@@ -72,20 +195,26 @@ export default function Notes() {
         userId: user.uid,
         title: "Untitled note",
         content: "",
-        color: "yellow",
+        color: "gold",
       });
       
       if (noteId) {
-        const newNote: Note = {
+        const newNote = normalizeNote({
           id: noteId,
           userId: user.uid,
           title: "Untitled note",
           content: "",
-          color: "yellow",
+          color: "gold",
           isPinned: false,
           createdAt: new Date(),
           updatedAt: new Date(),
-        };
+          annotation_marks: [],
+          answer_spaces: [],
+          auto_tags: {},
+          media_embeds: [],
+          exercises: [],
+          exercise_score: 0,
+        });
         setNotes((current) => [newNote, ...current]);
         setActiveId(noteId);
         toast.success("Note created");
@@ -98,7 +227,17 @@ export default function Notes() {
 
   const scheduleSave = (id: string, partial: Partial<Note>) => {
     // Update local state immediately
-    setNotes((current) => current.map((note) => (note.id === id ? { ...note, ...partial } : note)));
+    setNotes((current) =>
+      current.map((note) =>
+        note.id === id
+          ? normalizeNote({
+              ...note,
+              ...partial,
+              updatedAt: new Date(),
+            })
+          : note
+      )
+    );
     
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     setSaving(true);
@@ -117,7 +256,13 @@ export default function Notes() {
     if (!active) return;
     try {
       await notesService.update(active.id, { color });
-      setNotes((current) => current.map((note) => (note.id === active.id ? { ...note, color } : note)));
+      setNotes((current) =>
+        current.map((note) =>
+          note.id === active.id
+            ? normalizeNote({ ...note, color, updatedAt: new Date() })
+            : note
+        )
+      );
     } catch (error) {
       toast.error("Failed to update note color");
     }
@@ -130,10 +275,19 @@ export default function Notes() {
       await notesService.toggle(active.id, next);
       setNotes((current) => 
         [...current]
-          .map((note) => (note.id === active.id ? { ...note, isPinned: next } : note))
+          .map((note) =>
+            note.id === active.id
+              ? normalizeNote({
+                  ...note,
+                  isPinned: next,
+                  pinned: next,
+                  updatedAt: new Date(),
+                })
+              : note
+          )
           .sort((a, b) => {
-            if (a.isPinned !== b.isPinned) return b.isPinned ? 1 : -1;
-            return b.updatedAt.localeCompare(a.updatedAt);
+            if (a.isPinned !== b.isPinned) return Number(b.isPinned) - Number(a.isPinned);
+            return b.updatedAt.getTime() - a.updatedAt.getTime();
           })
       );
       toast.success(next ? "Note pinned" : "Note unpinned");
